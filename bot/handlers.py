@@ -70,6 +70,6 @@ async def handle_callback_query(update, context):
 def setup_handlers(app):
     """Register handlers to the bot."""
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_handler(PollAnswerHandler(handle_poll_answer))
+    app.add_handler(PollAnswerHandler(handle_poll_answer)) # <-- Add this line
     app.add_handler(CallbackQueryHandler(handle_callback_query))  # <-- Add this line
 
