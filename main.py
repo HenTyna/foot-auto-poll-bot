@@ -155,7 +155,7 @@ async def order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Get username from order info
     # username = order_info.get("username", "អតិថិជន")
-    username = "សីហា"
+    username = "🛒 Seyha's Order"  # Default name
 
     # Create the properly formatted response
     response = "\n".join([
