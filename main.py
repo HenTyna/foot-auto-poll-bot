@@ -15,17 +15,14 @@ import datetime
 from typing import Dict, Any
 import zoneinfo
 
-
 BOT_TOKEN = "6886653495:AAHtoOIZrUvvfH_C39fcz8K5kUYMJbae3Uo"
 
 # Store poll data and global order counts
 poll_data = {}
 global_orders = {}
-user_selections = {}  # Track user selections to prevent double counting
-
-# Default options to add to every poll
-DEFAULT_OPTIONS = ["បាយស x1 (ថែម)"]  # Add your default food options here
+user_selections = {}  # Track user selections
 chat_ids_for_scheduled_messages = set()
+
 async def send_scheduled_message(context: ContextTypes.DEFAULT_TYPE):
     """Send scheduled message to all stored chat IDs"""
     print(f"Attempting to send scheduled message at {datetime.datetime.now()}")
@@ -48,23 +45,18 @@ async def with_retry(func, *args, max_retries=3, **kwargs):
             if attempt == max_retries - 1:
                 raise
             print(f"Network error: {e}. Retrying in {2**attempt} seconds...")
-            await asyncio.sleep(2**attempt)  # Exponential backoff
+            await asyncio.sleep(2**attempt)
 
 async def process_food_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str):
-    """Process text that contains a food menu and create a poll with default options"""
+    """Process text that contains a food menu and create a poll"""
     options = []
     # Look for lines starting with Khmer numbers (១២៣៤៥៦) or standard numbers (1-6) followed by a dot
     for line in text.split('\n'):
         line = line.strip()
         if re.match(r'^[១២៣៤៥៦1-6]\.\s*.+', line):
             option_text = re.sub(r'^[១២៣៤៥៦1-6]\.\s*', '', line)
-            if option_text and option_text not in options:  # Prevent duplicates
+            if option_text and option_text not in options:
                 options.append(option_text)
-
-    # Add default options if they're not already in the list
-    for default_option in DEFAULT_OPTIONS:
-        if default_option not in options:
-            options.append(default_option)
 
     if len(options) >= 2:
         try:
@@ -83,19 +75,13 @@ async def process_food_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                 "options": options,
                 "message_id": message.message_id,
                 "chat_id": update.effective_chat.id,
-                "default_options": [option for option in options if option in DEFAULT_OPTIONS]
+                "default_options": []  # No default options
             }
 
-            # Initialize global order counts for this poll
-            global_orders[message.poll.id] = {}
-            for option in options:
-                # Set default counts for default options
-                if option in DEFAULT_OPTIONS:
-                    global_orders[message.poll.id][option] = 1  # Start with count of 1 for default options
-                else:
-                    global_orders[message.poll.id][option] = 0
+            # Initialize global order counts
+            global_orders[message.poll.id] = {option: 0 for option in options}
 
-            # Initialize user selections tracking for this poll
+            # Initialize user selections
             user_selections[message.poll.id] = {}
 
             # Add Order button
@@ -116,37 +102,29 @@ async def process_food_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
                 text=f"មានបញ្ហាក្នុងការបង្កើត poll: {str(e)}"
             )
 
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle incoming messages, including forwarded ones"""
     if not update.message:
         return
 
-    # Handle both regular and forwarded messages
     if update.message.text:
         text = update.message.text.strip()
-
-        # Check if it's a food menu message (starting with "ម្ហូបថ្ងៃ" or contains menu-like format)
         if text.startswith("ម្ហូបថ្ងៃ") or (
-                re.search(r'^[១២៣៤៥៦1-6]\.\s*.+', text, re.MULTILINE) and
-                len(re.findall(r'^[១២៣៤៥៦1-6]\.\s*.+', text, re.MULTILINE)) >= 2
+            re.search(r'^[១២៣៤៥៦1-6]\.\s*.+', text, re.MULTILINE) and
+            len(re.findall(r'^[១២៣៤៥៦1-6]\.\s*.+', text, re.MULTILINE)) >= 2
         ):
             await process_food_menu(update, context, text)
 
-    # Check for forwarded message with text
     elif update.message.forward_date and update.message.text:
         text = update.message.text.strip()
-
-        # Same check for forwarded messages
         if text.startswith("ម្ហូបថ្ងៃ") or (
-                re.search(r'^[១២៣៤៥៦1-6]\.\s*.+', text, re.MULTILINE) and
-                len(re.findall(r'^[១២៣៤៥៦1-6]\.\s*.+', text, re.MULTILINE)) >= 2
+            re.search(r'^[១២៣៤៥៦1-6]\.\s*.+', text, re.MULTILINE) and
+            len(re.findall(r'^[១២៣៤៥៦1-6]\.\s*.+', text, re.MULTILINE)) >= 2
         ):
             await process_food_menu(update, context, text)
 
-
 async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Update global order counts based on poll responses, avoiding double counting defaults"""
+    """Update global order counts based on poll responses"""
     poll_answer = update.poll_answer
     poll_id = poll_answer.poll_id
     user_id = poll_answer.user.id
@@ -155,116 +133,66 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if poll_id not in poll_data or poll_id not in global_orders:
         return
 
-    # Get the poll options from stored data
     options = poll_data[poll_id]["options"]
-    default_options = poll_data[poll_id].get("default_options", [])
 
-    # Initialize user's previous selections if this is their first interaction with this poll
     if user_id not in user_selections.get(poll_id, {}):
         user_selections[poll_id][user_id] = []
 
-    # Get user's previous selections
     previous_selections = user_selections[poll_id][user_id]
-
-    # Save current selections for future reference
-    current_selections = []
-    for idx in selected_options:
-        if idx < len(options):
-            current_selections.append(options[idx])
+    current_selections = [options[idx] for idx in selected_options if idx < len(options)]
     user_selections[poll_id][user_id] = current_selections
 
-    # Calculate changes in selections
-    newly_selected = [options[idx] for idx in selected_options if idx < len(options) and options[idx] not in previous_selections]
-    newly_unselected = [item for item in previous_selections if item not in [options[idx] for idx in selected_options if idx < len(options)]]
+    newly_selected = [item for item in current_selections if item not in previous_selections]
+    newly_unselected = [item for item in previous_selections if item not in current_selections]
 
-    # Update counters - increment for newly selected items
     for item in newly_selected:
-        # Don't increment for default items that already have a count of 1
-        if item in default_options and global_orders[poll_id][item] == 1:
-            # Skip incrementing if this is the default item's initial selection
-            pass
-        else:
-            global_orders[poll_id][item] += 1
+        global_orders[poll_id][item] += 1
 
-    # Update counters - decrement for unselected items
     for item in newly_unselected:
-        # Don't decrement below 1 for default items
-        if item in default_options and global_orders[poll_id][item] <= 1:
-            # Keep default items at minimum count of 1
-            global_orders[poll_id][item] = 1
-        else:
-            global_orders[poll_id][item] = max(0, global_orders[poll_id][item] - 1)
-
+        global_orders[poll_id][item] = max(0, global_orders[poll_id][item] - 1)
 
 async def order_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle Order button clicks - shows global counts including default options"""
+    """Handle Order button clicks"""
     query = update.callback_query
     await query.answer()
 
-    # Extract poll_id from callback data
     callback_data = query.data
     poll_id = callback_data.replace("order_", "")
 
-    # Check if this poll exists in our data
     if poll_id not in global_orders or poll_id not in poll_data:
         await query.message.reply_text("ខ្ញុំមិនអាចរកឃើញការបោះឆ្នោតនេះទេ។")
         return
 
-    # Get all ordered items
-    order_items = global_orders[poll_id]
-
-    # Filter items with count greater than 0
-    order_items = {item: count for item, count in order_items.items() if count > 0}
+    order_items = {item: count for item, count in global_orders[poll_id].items() if count > 0}
 
     if not order_items:
         await query.message.reply_text("មិនមានការបញ្ជាទិញណាមួយឡើយ។")
         return
 
-    # Build order summary lines
-    order_lines = [f"{item} ({qty})" for item, qty in order_items.items()]
+    order_lines = [f"- {item} x{qty}" for item, qty in order_items.items()]
 
-    # Create the properly formatted response
     response = "\n".join([
         "🛒 Name: Seyha",
         "------------------",
-        *order_lines,  # This unpacks all order lines
+        *order_lines,
         "------------------",
     ])
 
     await with_retry(query.message.reply_text, response)
 
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_ids_for_scheduled_messages.add(update.effective_chat.id)
     """Send a message when the command /start is issued."""
-    await update.message.reply_text('សួស្តី! ខ្ញុំជាបូតដែលបង្កើត Poll ដោយស្វ័យប្រវត្តិ។')
+    chat_ids_for_scheduled_messages.add(update.effective_chat.id)
 
+    message = (
+        "សួស្តី! ខ្ញុំជា Bot ដែលបង្កើត Poll ដោយស្វ័យប្រវត្តិ។\n\n"
+        "របៀបប្រើប្រាស់៖\n"
+        "១. ជ្រើសរើសមុខម្ហូបដែលអ្នកចង់ Order\n"
+        "២. Vote មុខម្ហូបរបស់អ្នក\n"
+        "៣. រង់ចាំការជ្រើសរើសរួចរាល់ រួចចុចប៊ូតុង Order 🛒"
+    )
 
-async def set_defaults(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Command to view or change default options"""
-    global DEFAULT_OPTIONS
-
-    if not context.args:
-        # Show current defaults
-        if DEFAULT_OPTIONS:
-            defaults_text = ", ".join(DEFAULT_OPTIONS)
-            await update.message.reply_text(f"Current default options: {defaults_text}")
-        else:
-            await update.message.reply_text("No default options set.")
-        await update.message.reply_text("To set new defaults, use: /defaults option1, option2, ...")
-        return
-
-    # Join all arguments and split by commas
-    new_defaults = " ".join(context.args).split(",")
-    # Clean up whitespace
-    new_defaults = [opt.strip() for opt in new_defaults if opt.strip()]
-
-    if new_defaults:
-        DEFAULT_OPTIONS = new_defaults
-        defaults_text = ", ".join(DEFAULT_OPTIONS)
-        await update.message.reply_text(f"Default options updated: {defaults_text}")
-    else:
-        await update.message.reply_text("Invalid format. Use: /defaults option1, option2, ...")
+    await update.message.reply_text(message)
 
 async def debug_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Manual trigger for testing"""
@@ -285,8 +213,6 @@ async def set_scheduler(context: ContextTypes.DEFAULT_TYPE):
     remove_job_if_exists("daily_message", context)
 
     phnom_penh_timezone = zoneinfo.ZoneInfo("Asia/Phnom_Penh")
-
-    # Set time to 20:56 Phnom Penh time
     time = datetime.time(hour=8, minute=0, tzinfo=phnom_penh_timezone)
 
     context.job_queue.run_daily(
@@ -296,17 +222,16 @@ async def set_scheduler(context: ContextTypes.DEFAULT_TYPE):
         name="daily_message"
     )
     print(f"Scheduled daily message for {time} (Phnom Penh time)")
+
 def main():
     application = Application.builder().token(BOT_TOKEN).build()
 
-    # Add handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("debug_send", debug_send))
     application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(order_callback, pattern=r'^order_'))
     application.add_handler(PollAnswerHandler(handle_poll_answer))
 
-    # When the bot fully ready, then set scheduler
     async def post_init(application: Application):
         await set_scheduler(application)
 
@@ -320,5 +245,6 @@ def main():
             Update.CALLBACK_QUERY
         ]
     )
+
 if __name__ == '__main__':
     main()
