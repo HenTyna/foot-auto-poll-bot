@@ -1,75 +1,191 @@
-import re
-from telegram.ext import MessageHandler, filters, PollAnswerHandler, CallbackQueryHandler
-from .menu_processor import process_food_menu, poll_data
+"""
+Message and callback handlers for the Telegram Food Poll Bot.
+"""
+
+import logging
 from collections import Counter
-user_orders = {}
+from telegram import Update
+from telegram.ext import (
+    ContextTypes, MessageHandler, filters, PollAnswerHandler, 
+    CallbackQueryHandler, CommandHandler
+)
+from .config import (
+    WELCOME_MESSAGE, DAILY_MESSAGE, ERROR_POLL_NOT_FOUND, 
+    ERROR_NO_ORDERS, ERROR_NO_SELECTION, ORDER_NAME
+)
+from .utils import is_food_menu_text, format_order_summary, with_retry
+from .menu_processor import (
+    process_food_menu, get_poll_data, get_global_orders, 
+    update_user_selection, update_global_orders, get_user_selections
+)
+from .scheduler import send_scheduled_message, add_chat_for_scheduled_messages
 
-async def handle_message(update, context):
-    """Handle incoming messages and forwarded messages."""
-    if not update.message:
+logger = logging.getLogger(__name__)
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handle incoming messages and forwarded messages.
+    
+    Args:
+        update: Telegram update object
+        context: Bot context
+    """
+    logger.info(f"Received message: {update.message.text if update.message and update.message.text else 'No text'}")
+    
+    if not update.message or not update.message.text:
+        logger.info("No message or no text, skipping")
         return
+    
+    text = update.message.text.strip()
+    logger.info(f"Processing text: {repr(text)}")
+    
+    # Check if this is a food menu text
+    if is_food_menu_text(text):
+        logger.info(f"Processing food menu from user {update.effective_user.id}")
+        await process_food_menu(update, context, text)
+    else:
+        logger.info(f"Text not recognized as food menu: {repr(text)}")
 
-    if update.message.text:
-        text = update.message.text.strip()
-
-        if text.startswith("ម្ហូបថ្ងៃ") or (
-            re.search(r'^[១២៣៤៥៦1-6]\.\s*.+', text, re.MULTILINE) and
-            len(re.findall(r'^[១២៣៤៥៦1-6]\.\s*.+', text, re.MULTILINE)) >= 2
-        ):
-            await process_food_menu(update, context, text)
-
-    elif update.message.forward_date and update.message.text:
-        text = update.message.text.strip()
-
-        if text.startswith("ម្ហូបថ្ងៃ") or (
-            re.search(r'^[១២៣៤៥៦1-6]\.\s*.+', text, re.MULTILINE) and
-            len(re.findall(r'^[១២៣៤៥៦1-6]\.\s*.+', text, re.MULTILINE)) >= 2
-        ):
-            await process_food_menu(update, context, text)
-
-async def handle_poll_answer(update, context):
-    """Store user's poll selections."""
+async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handle poll answer updates and update global order counts.
+    
+    Args:
+        update: Telegram update object
+        context: Bot context
+    """
     poll_answer = update.poll_answer
-
-    if not poll_answer.user:
-        print("Error: No user information in poll answer")
+    
+    if not poll_answer or not poll_answer.user:
+        logger.warning("Received poll answer without user information")
         return
-
-    user_id = poll_answer.user.id
+    
     poll_id = poll_answer.poll_id
+    user_id = poll_answer.user.id
     selected_options = poll_answer.option_ids
+    
+    # Get poll data
+    poll_data = get_poll_data(poll_id)
+    if not poll_data:
+        logger.warning(f"Poll data not found for poll ID: {poll_id}")
+        return
+    
+    options = poll_data.get("options", [])
+    
+    # Get previous selections for this user
+    user_selections_data = get_user_selections(poll_id)
+    previous_selections = user_selections_data.get(user_id, [])
+    
+    # Calculate current selections
+    current_selections = [options[idx] for idx in selected_options if idx < len(options)]
+    
+    # Update user selections
+    update_user_selection(poll_id, user_id, current_selections)
+    
+    # Calculate changes and update global orders
+    newly_selected = [item for item in current_selections if item not in previous_selections]
+    newly_unselected = [item for item in previous_selections if item not in current_selections]
+    
+    # Update global order counts
+    for item in newly_selected:
+        update_global_orders(poll_id, item, 1)
+        logger.info(f"User {user_id} selected: {item}")
+    
+    for item in newly_unselected:
+        update_global_orders(poll_id, item, -1)
+        logger.info(f"User {user_id} unselected: {item}")
+    
+    logger.info(f"User {user_id} updated poll {poll_id} selections: {current_selections} (previous: {previous_selections})")
 
-    if poll_id in poll_data:
-        options = poll_data[poll_id]["options"]
-        user_orders[user_id] = [options[i] for i in selected_options]
-        print(f"User {user_id} selected: {user_orders[user_id]}")
-
-async def handle_callback_query(update, context):
-    """Handle button clicks (e.g., Order button)."""
+async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handle button clicks (e.g., Order button).
+    
+    Args:
+        update: Telegram update object
+        context: Bot context
+    """
     query = update.callback_query
     await query.answer()
+    
+    if not query.data or not query.data.startswith("order_"):
+        return
+    
+    poll_id = query.data.replace("order_", "")
+    
+    # Check if poll exists
+    poll_data = get_poll_data(poll_id)
+    if not poll_data:
+        logger.warning(f"Poll not found for callback: {poll_id}")
+        await query.message.reply_text(ERROR_POLL_NOT_FOUND)
+        return
+    
+    # Get global orders for this poll
+    order_items = get_global_orders(poll_id)
+    order_items = {item: count for item, count in order_items.items() if count > 0}
+    
+    if not order_items:
+        await query.message.reply_text(ERROR_NO_ORDERS)
+        return
+    
+    # Format and send order summary
+    order_summary = format_order_summary(order_items, ORDER_NAME)
+    
+    try:
+        await with_retry(query.message.reply_text, order_summary)
+        logger.info(f"Order summary sent for poll {poll_id}: {order_items}")
+    except Exception as e:
+        logger.error(f"Error sending order summary: {e}")
+        await query.message.reply_text(f"Error sending order summary: {str(e)}")
 
-    if query.data.startswith("order_"):
-        poll_id = query.data.split("_", 1)[1]
-        user_id = query.from_user.id
+async def handle_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handle /start command.
+    
+    Args:
+        update: Telegram update object
+        context: Bot context
+    """
+    try:
+        # Add chat to scheduled messages
+        add_chat_for_scheduled_messages(update.effective_chat.id)
+        await update.message.reply_text(WELCOME_MESSAGE)
+        logger.info(f"Start command received from user {update.effective_user.id}")
+    except Exception as e:
+        logger.error(f"Error handling start command: {e}")
 
-        if user_id in user_orders:
-            orders = user_orders[user_id]
+async def handle_debug_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handle /debug_send command for testing.
+    
+    Args:
+        update: Telegram update object
+        context: Bot context
+    """
+    try:
+        await send_scheduled_message(context)
+        await update.message.reply_text("Debug message sent!")
+        logger.info("Debug message sent manually")
+    except Exception as e:
+        logger.error(f"Error in debug command: {e}")
 
-            # Count quantity of each selected item
-            order_counts = Counter(orders)
-
-            order_text = "\n".join(f"- {item} x{qty}" for item, qty in order_counts.items())
-            await query.message.reply_text(
-                f"🛒 Seyha's Order:\n{order_text}"
-            )
-        else:
-            await query.message.reply_text(
-                "❗ You haven't selected any food yet!"
-            )
-def setup_handlers(app):
-    """Register handlers to the bot."""
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_handler(PollAnswerHandler(handle_poll_answer)) # <-- Add this line
-    app.add_handler(CallbackQueryHandler(handle_callback_query))  # <-- Add this line
+def setup_handlers(application):
+    """
+    Register all handlers to the bot application.
+    
+    Args:
+        application: Telegram bot application
+    """
+    # Command handlers
+    application.add_handler(CommandHandler("start", handle_start_command))
+    application.add_handler(CommandHandler("debug_send", handle_debug_command))
+    
+    # Message handlers (handle all text messages except commands)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    # Poll and callback handlers
+    application.add_handler(PollAnswerHandler(handle_poll_answer))
+    application.add_handler(CallbackQueryHandler(handle_callback_query))
+    
+    logger.info("All handlers registered successfully")
 
