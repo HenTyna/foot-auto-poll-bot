@@ -6,7 +6,7 @@ import logging
 from typing import Dict, Any
 from telegram import Update, Poll, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes
-from .config import POLL_QUESTION, ORDER_BUTTON_TEXT, ORDER_INSTRUCTION_TEXT, ERROR_POLL_CREATION
+from .config import POLL_QUESTION, ORDER_BUTTON_TEXT, CLOSE_ORDER_BUTTON_TEXT, ORDER_INSTRUCTION_TEXT, ERROR_POLL_CREATION
 from .utils import with_retry, extract_menu_options
 
 logger = logging.getLogger(__name__)
@@ -51,7 +51,8 @@ async def process_food_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             "options": options,
             "message_id": message.message_id,
             "chat_id": update.effective_chat.id,
-            "created_at": update.message.date if update.message else None
+            "created_at": update.message.date if update.message else None,
+            "button_message_id": None  # Will be set after sending button message
         }
         
         # Initialize global order counts
@@ -63,17 +64,26 @@ async def process_food_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         # Initialize order button used flag
         order_button_used[message.poll.id] = False
         
-        # Add Order button
-        keyboard = [[InlineKeyboardButton(ORDER_BUTTON_TEXT, callback_data=f"order_{message.poll.id}")]]
+        # Add Order and Close Order buttons
+        keyboard = [
+            [
+                InlineKeyboardButton(ORDER_BUTTON_TEXT, callback_data=f"order_{message.poll.id}"),
+                InlineKeyboardButton(CLOSE_ORDER_BUTTON_TEXT, callback_data=f"close_order_{message.poll.id}")
+            ]
+        ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await with_retry(
+        # Send button message and store its ID
+        button_message = await with_retry(
             context.bot.send_message,
             chat_id=update.effective_chat.id,
             text=ORDER_INSTRUCTION_TEXT,
             reply_markup=reply_markup,
             reply_to_message_id=message.message_id
         )
+        
+        # Store the button message ID for later editing
+        poll_data[message.poll.id]["button_message_id"] = button_message.message_id
         
         logger.info(f"Created poll with {len(options)} options: {options}")
         
@@ -132,3 +142,40 @@ def is_order_button_used(poll_id: str) -> bool:
 def set_order_button_used(poll_id: str) -> None:
     """Mark the order button as used for this poll."""
     order_button_used[poll_id] = True
+
+async def hide_order_buttons(context: ContextTypes.DEFAULT_TYPE, poll_id: str) -> None:
+    """
+    Hide the order buttons by editing the message to remove the inline keyboard.
+    
+    Args:
+        context: Bot context
+        poll_id: ID of the poll
+    """
+    poll_info = poll_data.get(poll_id)
+    if not poll_info:
+        logger.warning(f"Poll data not found for hiding buttons: {poll_id}")
+        return
+    
+    button_message_id = poll_info.get("button_message_id")
+    chat_id = poll_info.get("chat_id")
+    
+    if not button_message_id or not chat_id:
+        logger.warning(f"Button message ID or chat ID not found for poll {poll_id}")
+        return
+    
+    try:
+        # Edit the message to remove the inline keyboard
+        await with_retry(
+            context.bot.edit_message_reply_markup,
+            chat_id=chat_id,
+            message_id=button_message_id,
+            reply_markup=None
+        )
+        
+        # Mark the order button as used
+        set_order_button_used(poll_id)
+        
+        logger.info(f"Order buttons hidden for poll {poll_id}")
+        
+    except Exception as e:
+        logger.error(f"Error hiding order buttons for poll {poll_id}: {e}")

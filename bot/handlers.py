@@ -11,13 +11,12 @@ from telegram.ext import (
 )
 from .config import (
     WELCOME_MESSAGE, DAILY_MESSAGE, ERROR_POLL_NOT_FOUND, 
-    ERROR_NO_ORDERS, ERROR_NO_SELECTION, ORDER_NAME, ERROR_ORDER_BUTTON_USED
+    ERROR_NO_ORDERS, ERROR_NO_SELECTION, ORDER_NAME, CLOSE_ORDER_BUTTON_TEXT, ORDER_CLOSED_MESSAGE
 )
 from .utils import is_food_menu_text, format_order_summary, with_retry
 from .menu_processor import (
     process_food_menu, get_poll_data, get_global_orders, 
-    update_user_selection, update_global_orders, get_user_selections,
-    is_order_button_used, set_order_button_used
+    update_user_selection, update_global_orders, get_user_selections, hide_order_buttons
 )
 from .scheduler import send_scheduled_message, add_chat_for_scheduled_messages
 
@@ -101,7 +100,7 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    Handle button clicks (e.g., Order button).
+    Handle button clicks (e.g., Order button, Close Order button).
     
     Args:
         update: Telegram update object
@@ -110,58 +109,63 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.answer()
     
-    if not query.data or not query.data.startswith("order_"):
+    if not query.data:
         return
     
-    poll_id = query.data.replace("order_", "")
-    
-    # Check if poll exists
-    poll_data = get_poll_data(poll_id)
-    if not poll_data:
-        logger.warning(f"Poll not found for callback: {poll_id}")
-        await query.message.reply_text(ERROR_POLL_NOT_FOUND)
-        return
-    
-    # Check if order button has already been used
-    if is_order_button_used(poll_id):
-        await query.message.reply_text(ERROR_ORDER_BUTTON_USED)
-        return
-    
-    # Get global orders for this poll
-    order_items = get_global_orders(poll_id)
-    order_items = {item: count for item, count in order_items.items() if count > 0}
-    
-    if not order_items:
-        await query.message.reply_text(ERROR_NO_ORDERS)
-        return
-    
-    # Get user selections for detail
-    user_selections_data = get_user_selections(poll_id)
-    
-    # Format and send order summary with voter details
-    order_summary = format_order_summary(order_items, ORDER_NAME, user_selections_data)
-    
-    try:
-        await with_retry(query.message.reply_text, order_summary)
-        logger.info(f"Order summary sent for poll {poll_id}: {order_items}")
+    # Handle Order button
+    if query.data.startswith("order_"):
+        poll_id = query.data.replace("order_", "")
         
-        # Mark order button as used and disable it
-        set_order_button_used(poll_id)
+        # Check if poll exists
+        poll_data = get_poll_data(poll_id)
+        if not poll_data:
+            logger.warning(f"Poll not found for callback: {poll_id}")
+            await query.message.reply_text(ERROR_POLL_NOT_FOUND)
+            return
         
-        # Edit the original message to remove the order button
+        # Get global orders for this poll
+        order_items = get_global_orders(poll_id)
+        order_items = {item: count for item, count in order_items.items() if count > 0}
+        
+        if not order_items:
+            await query.message.reply_text(ERROR_NO_ORDERS)
+            return
+        
+        # Get user selections for detail
+        user_selections_data = get_user_selections(poll_id)
+        
+        # Format and send order summary with voter details
+        order_summary = format_order_summary(order_items, ORDER_NAME, user_selections_data)
+        
         try:
-            await context.bot.edit_message_reply_markup(
-                chat_id=query.message.chat_id,
-                message_id=query.message.message_id,
-                reply_markup=None
-            )
-            logger.info(f"Order button disabled for poll {poll_id}")
-        except Exception as edit_error:
-            logger.warning(f"Could not disable order button: {edit_error}")
+            await with_retry(query.message.reply_text, order_summary)
+            logger.info(f"Order summary sent for poll {poll_id}: {order_items}")
+        except Exception as e:
+            logger.error(f"Error sending order summary: {e}")
+            await query.message.reply_text(f"Error sending order summary: {str(e)}")
+    
+    # Handle Close Order button
+    elif query.data.startswith("close_order_"):
+        poll_id = query.data.replace("close_order_", "")
+        
+        # Check if poll exists
+        poll_data = get_poll_data(poll_id)
+        if not poll_data:
+            logger.warning(f"Poll not found for close order callback: {poll_id}")
+            await query.message.reply_text(ERROR_POLL_NOT_FOUND)
+            return
+        
+        try:
+            # Hide the order buttons
+            await hide_order_buttons(context, poll_id)
             
-    except Exception as e:
-        logger.error(f"Error sending order summary: {e}")
-        await query.message.reply_text(f"Error sending order summary: {str(e)}")
+            # Send confirmation message
+            await query.message.reply_text(ORDER_CLOSED_MESSAGE)
+            logger.info(f"Order closed for poll {poll_id}")
+            
+        except Exception as e:
+            logger.error(f"Error closing order for poll {poll_id}: {e}")
+            await query.message.reply_text(f"Error closing order: {str(e)}")
 
 async def handle_start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
