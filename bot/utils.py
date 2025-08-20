@@ -69,13 +69,14 @@ def is_food_menu_text(text: str) -> bool:
     numbered_items = re.findall(r'^[១២៣៤៥៦1-6]\.\s*.+', text, re.MULTILINE)
     return len(numbered_items) >= 2
 
-def format_order_summary(order_items: Dict[str, int], order_name: str = "Seyha") -> str:
+def format_order_summary(order_items: Dict[str, int], order_name: str = "Seyha", user_selections: Optional[Dict[int, Dict[str, Any]]] = None) -> str:
     """
-    Format order items into a readable summary.
+    Format order items into a readable summary with voter details.
     
     Args:
         order_items: Dictionary mapping item names to quantities
         order_name: Name for the order
+        user_selections: Dictionary mapping user_id to user data (selections and name)
         
     Returns:
         Formatted order summary string
@@ -83,14 +84,50 @@ def format_order_summary(order_items: Dict[str, int], order_name: str = "Seyha")
     if not order_items:
         return ""
     
+    # Build the main order summary
     order_lines = [f"- {item} x{qty}" for item, qty in order_items.items()]
-    
-    return "\n".join([
+
+    # Determine who placed the order
+    if user_selections and isinstance(user_selections, dict):
+        # Try to get the first user's name if available
+        first_user = next(iter(user_selections.values()), None)
+        order_by = first_user.get('name', 'Unknown') if isinstance(first_user, dict) else 'Unknown'
+    else:
+        order_by = 'Unknown'
+
+    # Build the summary
+    summary_lines = [
         f"🛒 Name: {order_name}",
+        # f"👤 Order By: {order_by}",
         "------------------",
         *order_lines,
-        "------------------",
-    ])
+        "------------------"
+    ]
+    
+    # Add detail section if user selections are provided
+    if user_selections:
+        summary_lines.append("Detail:")
+        
+        # Create a mapping of items to voters
+        item_voters = {}
+        for user_id, user_data in user_selections.items():
+            user_name = user_data.get('name', f'User{user_id}')
+            selections = user_data.get('selections', [])
+            
+            for item in selections:
+                if item in order_items:  # Only include items that are actually ordered
+                    if item not in item_voters:
+                        item_voters[item] = []
+                    item_voters[item].append(user_name)
+        
+        # Add voter details for each item
+        for item, qty in order_items.items():
+            voters = item_voters.get(item, [])
+            if voters:
+                voter_names = ", ".join(voters)
+                summary_lines.append(f"- {item} x{qty} ({voter_names})")
+    
+    return "\n".join(summary_lines)
 
 def remove_job_if_exists(name: str, application: Application) -> bool:
     """

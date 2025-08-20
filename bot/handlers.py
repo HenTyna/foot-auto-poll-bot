@@ -11,12 +11,13 @@ from telegram.ext import (
 )
 from .config import (
     WELCOME_MESSAGE, DAILY_MESSAGE, ERROR_POLL_NOT_FOUND, 
-    ERROR_NO_ORDERS, ERROR_NO_SELECTION, ORDER_NAME
+    ERROR_NO_ORDERS, ERROR_NO_SELECTION, ORDER_NAME, ERROR_ORDER_BUTTON_USED
 )
 from .utils import is_food_menu_text, format_order_summary, with_retry
 from .menu_processor import (
     process_food_menu, get_poll_data, get_global_orders, 
-    update_user_selection, update_global_orders, get_user_selections
+    update_user_selection, update_global_orders, get_user_selections,
+    is_order_button_used, set_order_button_used
 )
 from .scheduler import send_scheduled_message, add_chat_for_scheduled_messages
 
@@ -62,6 +63,7 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     poll_id = poll_answer.poll_id
     user_id = poll_answer.user.id
+    user_name = poll_answer.user.full_name or poll_answer.user.username or f'User{user_id}'
     selected_options = poll_answer.option_ids
     
     # Get poll data
@@ -74,13 +76,13 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     # Get previous selections for this user
     user_selections_data = get_user_selections(poll_id)
-    previous_selections = user_selections_data.get(user_id, [])
+    previous_selections = user_selections_data.get(user_id, {}).get('selections', [])
     
     # Calculate current selections
     current_selections = [options[idx] for idx in selected_options if idx < len(options)]
     
-    # Update user selections
-    update_user_selection(poll_id, user_id, current_selections)
+    # Update user selections with name
+    update_user_selection(poll_id, user_id, current_selections, user_name)
     
     # Calculate changes and update global orders
     newly_selected = [item for item in current_selections if item not in previous_selections]
@@ -89,13 +91,13 @@ async def handle_poll_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Update global order counts
     for item in newly_selected:
         update_global_orders(poll_id, item, 1)
-        logger.info(f"User {user_id} selected: {item}")
+        logger.info(f"User {user_name} selected: {item}")
     
     for item in newly_unselected:
         update_global_orders(poll_id, item, -1)
-        logger.info(f"User {user_id} unselected: {item}")
+        logger.info(f"User {user_name} unselected: {item}")
     
-    logger.info(f"User {user_id} updated poll {poll_id} selections: {current_selections} (previous: {previous_selections})")
+    logger.info(f"User {user_name} updated poll {poll_id} selections: {current_selections} (previous: {previous_selections})")
 
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
@@ -120,6 +122,11 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.message.reply_text(ERROR_POLL_NOT_FOUND)
         return
     
+    # Check if order button has already been used
+    if is_order_button_used(poll_id):
+        await query.message.reply_text(ERROR_ORDER_BUTTON_USED)
+        return
+    
     # Get global orders for this poll
     order_items = get_global_orders(poll_id)
     order_items = {item: count for item, count in order_items.items() if count > 0}
@@ -128,12 +135,30 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         await query.message.reply_text(ERROR_NO_ORDERS)
         return
     
-    # Format and send order summary
-    order_summary = format_order_summary(order_items, ORDER_NAME)
+    # Get user selections for detail
+    user_selections_data = get_user_selections(poll_id)
+    
+    # Format and send order summary with voter details
+    order_summary = format_order_summary(order_items, ORDER_NAME, user_selections_data)
     
     try:
         await with_retry(query.message.reply_text, order_summary)
         logger.info(f"Order summary sent for poll {poll_id}: {order_items}")
+        
+        # Mark order button as used and disable it
+        set_order_button_used(poll_id)
+        
+        # Edit the original message to remove the order button
+        try:
+            await context.bot.edit_message_reply_markup(
+                chat_id=query.message.chat_id,
+                message_id=query.message.message_id,
+                reply_markup=None
+            )
+            logger.info(f"Order button disabled for poll {poll_id}")
+        except Exception as edit_error:
+            logger.warning(f"Could not disable order button: {edit_error}")
+            
     except Exception as e:
         logger.error(f"Error sending order summary: {e}")
         await query.message.reply_text(f"Error sending order summary: {str(e)}")
@@ -151,6 +176,7 @@ async def handle_start_command(update: Update, context: ContextTypes.DEFAULT_TYP
         add_chat_for_scheduled_messages(update.effective_chat.id)
         await update.message.reply_text(WELCOME_MESSAGE)
         logger.info(f"Start command received from user {update.effective_user.id}")
+        logger.info(f"Username: {update.effective_user.full_name}")
     except Exception as e:
         logger.error(f"Error handling start command: {e}")
 
