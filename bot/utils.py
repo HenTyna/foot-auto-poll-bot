@@ -46,6 +46,49 @@ def extract_menu_options(text: str) -> List[str]:
     
     return options
 
+def format_visual_menu(original_text: str, options: List[str], quantities: Dict[str, int] = None) -> str:
+    """
+    Format the original menu text into a visual menu display with quantities.
+    
+    Args:
+        original_text: Original menu text
+        options: List of menu options
+        quantities: Dictionary mapping item names to quantities
+        
+    Returns:
+        Formatted visual menu text
+    """
+    if quantities is None:
+        quantities = {}
+    
+    # Extract the title (first line)
+    lines = original_text.strip().split('\n')
+    title = lines[0] if lines else "ម្ហូបថ្ងៃ"
+    
+    # Create the visual menu
+    menu_lines = [
+        f"🍽️ {title} - Today's Menu",
+        "━━━━━━━━━━━━━━━━━━━",
+        ""
+    ]
+    
+    # Add numbered menu items with quantities
+    for i, option in enumerate(options, 1):
+        qty = quantities.get(option, 0)
+        if qty > 0:
+            menu_lines.append(f"{i}. {option} x{qty}")
+        else:
+            menu_lines.append(f"{i}. {option}")
+    
+    menu_lines.extend([
+        "",
+        "━━━━━━━━━━━━━━━━━━",
+        "📝 Select quantities and click Vote to confirm",
+        ""
+    ])
+    
+    return "\n".join(menu_lines)
+
 def is_food_menu_text(text: str) -> bool:
     """
     Check if the given text appears to be a food menu.
@@ -112,13 +155,13 @@ def format_order_summary(order_items: Dict[str, int], order_name: str = "Seyha",
         item_voters = {}
         for user_id, user_data in user_selections.items():
             user_name = user_data.get('name', f'User{user_id}')
-            selections = user_data.get('selections', [])
+            quantities = user_data.get('quantities', {})
             
-            for item in selections:
-                if item in order_items:  # Only include items that are actually ordered
+            for item, qty in quantities.items():
+                if item in order_items and qty > 0:  # Only include items that are actually ordered
                     if item not in item_voters:
                         item_voters[item] = []
-                    item_voters[item].append(user_name)
+                    item_voters[item].append(f"{user_name} (x{qty})" if qty > 1 else user_name)
         
         # Add voter details for each item
         for item, qty in order_items.items():

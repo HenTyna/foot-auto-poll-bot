@@ -23,26 +23,24 @@ LOG_FILE = os.getenv("LOG_FILE", "bot.log")
 TIMEZONE = "Asia/Phnom_Penh"
 SCHEDULED_MESSAGE_TIME = "08:00"  # 8 AM
 
-# Poll Configuration
-POLL_QUESTION = "ជ្រើសរើសម្ហូបដែលអ្នកចូលចិត្ត!"
+# Menu Configuration
 ORDER_BUTTON_TEXT = "🛒 Order"
 CLOSE_ORDER_BUTTON_TEXT = "❌ Close Order"
-ORDER_INSTRUCTION_TEXT = "ចុចប៊ូតុងខាងក្រោមដើម្បីបញ្ជាទិញ៖"
 ORDER_NAME = "Seyha"
 
 # Message Templates
-WELCOME_MESSAGE = """សួស្តី! ខ្ញុំជា Bot ដែលបង្កើត Poll ដោយស្វ័យប្រវត្តិ។
+WELCOME_MESSAGE = """សួស្តី! ខ្ញុំជា Bot ដែលបង្កើត Menu ដោយស្វ័យប្រវត្តិ។
 
 របៀបប្រើប្រាស់៖
-១. ជ្រើសរើសមុខម្ហូបដែលអ្នកចង់ Order
-២. Vote មុខម្ហូបរបស់អ្នក
+១. ជ្រើសរើសបរិមាណម្ហូបដែលអ្នកចង់ Order
+២. ចុចប៊ូតុង Vote ដើម្បីបញ្ជាក់
 ៣. រង់ចាំការជ្រើសរើសរួចរាល់ រួចចុចប៊ូតុង Order 🛒"""
 
 DAILY_MESSAGE = "ថ្ងៃនេះបានម្ហូបអ្វី?"
 
 # Error Messages
-ERROR_POLL_CREATION = "មានបញ្ហាក្នុងការបង្កើត poll: {}"
-ERROR_POLL_NOT_FOUND = "ខ្ញុំមិនអាចរកឃើញការបោះឆ្នោតនេះទេ។"
+ERROR_POLL_CREATION = "មានបញ្ហាក្នុងការបង្កើត menu: {}"
+ERROR_POLL_NOT_FOUND = "ខ្ញុំមិនអាចរកឃើញ menu នេះទេ។"
 ERROR_NO_ORDERS = "មិនមានការបញ្ជាទិញណាមួយឡើយ។"
 ERROR_NO_SELECTION = "❗ You haven't selected any food yet!"
 ORDER_CLOSED_MESSAGE = "✅ Order has been closed."
