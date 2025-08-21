@@ -42,7 +42,7 @@ async def process_food_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         menu_id = f"menu_{update.effective_chat.id}_{int(time.time())}"
         
         # Create visual menu text
-        menu_text = format_visual_menu(text, options)
+        menu_text = format_visual_menu(text, options, {}, 0)
         
         # Create quantity buttons for each menu item
         keyboard = create_quantity_keyboard(menu_id, options)
@@ -322,9 +322,10 @@ async def update_menu_display(context: ContextTypes.DEFAULT_TYPE, menu_id: str) 
         return
     
     try:
-        # Create updated menu text with combined quantities (including pending selections)
-        combined_quantities = get_combined_orders(menu_id)
-        updated_menu_text = format_visual_menu(original_text, options, combined_quantities)
+        # Create updated menu text with only voted quantities (stable display)
+        voted_quantities = get_global_orders(menu_id)
+        pending_count = get_pending_selections_count(menu_id)
+        updated_menu_text = format_visual_menu(original_text, options, voted_quantities, pending_count)
         
         # Create updated keyboard
         keyboard = create_quantity_keyboard(menu_id, options)
@@ -461,6 +462,24 @@ def get_user_total_selections(menu_id: str, user_id: int) -> int:
     total += sum(user_quants.values())
     
     return total
+
+def get_pending_selections_count(menu_id: str) -> int:
+    """
+    Get total number of pending selections across all users.
+    
+    Args:
+        menu_id: ID of the menu
+        
+    Returns:
+        Total number of pending selections
+    """
+    total_pending = 0
+    pending = pending_selections.get(menu_id, {})
+    
+    for user_id, user_items in pending.items():
+        total_pending += sum(user_items.values())
+    
+    return total_pending
 
 def reset_user_selections(menu_id: str, user_id: int) -> None:
     """

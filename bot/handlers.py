@@ -18,7 +18,7 @@ from .menu_processor import (
     process_food_menu, get_menu_data, get_global_orders, 
     update_user_quantity, get_user_selections, hide_order_buttons, update_menu_display, process_user_vote,
     get_combined_orders, get_combined_user_selections, validate_user_selections, get_user_total_selections,
-    reset_user_selections, get_user_quantities
+    reset_user_selections, get_user_quantities, get_pending_selections_count
 )
 from .scheduler import send_scheduled_message, add_chat_for_scheduled_messages
 

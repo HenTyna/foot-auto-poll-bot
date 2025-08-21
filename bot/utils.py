@@ -46,7 +46,7 @@ def extract_menu_options(text: str) -> List[str]:
     
     return options
 
-def format_visual_menu(original_text: str, options: List[str], quantities: Dict[str, int] = None) -> str:
+def format_visual_menu(original_text: str, options: List[str], quantities: Dict[str, int] = None, pending_count: int = 0) -> str:
     """
     Format the original menu text into a visual menu display with quantities.
     
@@ -54,6 +54,7 @@ def format_visual_menu(original_text: str, options: List[str], quantities: Dict[
         original_text: Original menu text
         options: List of menu options
         quantities: Dictionary mapping item names to quantities
+        pending_count: Number of pending selections
         
     Returns:
         Formatted visual menu text
@@ -80,19 +81,25 @@ def format_visual_menu(original_text: str, options: List[str], quantities: Dict[
         else:
             menu_lines.append(f"{i}. {option}")
     
-    # Count total selections
-    total_selections = sum(quantities.values())
+    # Count total voted selections
+    total_voted = sum(quantities.values())
     
     menu_lines.extend([
         "",
         "━━━━━━━━━━━━━━━━━━",
-        f"📊 Total : {total_selections}",
+        f"📊 Voted selections: {total_voted}",
+    ])
+    
+    # Add pending count if there are any
+    if pending_count > 0:
+        menu_lines.append(f"⏳ Pending selections: {pending_count}")
+    
+    menu_lines.extend([
         "📝 Select quantities and click Vote to confirm",
-        "💡 Only voted selections will be included in the order",
+        "💡 Only voted selections are shown above",
         "👤 If you want to change your order, click reset and select the item again",
-        "🔄 If you want to remove an item, click reset and select the item again"
+        "🔄 If you want to remove an item, click reset and select the item again",
         ""
-
     ])
     
     return "\n".join(menu_lines)
