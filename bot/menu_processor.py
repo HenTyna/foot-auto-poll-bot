@@ -90,7 +90,7 @@ async def process_food_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         button_message = await with_retry(
             context.bot.send_message,
             chat_id=update.effective_chat.id,
-            text="📝 Select quantities and click Confirm to vote",
+            text="ចុចប៊ូតុងខាងក្រោមដើម្បីបញ្ជាទិញ",
             reply_markup=order_reply_markup,
             reply_to_message_id=message.message_id
         )
@@ -132,8 +132,11 @@ def create_quantity_keyboard(menu_id: str, options: List[str]) -> List[List[Inli
             row.append(InlineKeyboardButton(button_text, callback_data=callback_data))
         keyboard.append(row)
     
-    # Add vote button
-    keyboard.append([InlineKeyboardButton("Vote", callback_data=f"vote_{menu_id}")])
+    # Add vote and reset buttons
+    keyboard.append([
+        InlineKeyboardButton("🗑️ Reset", callback_data=f"reset_{menu_id}"),
+        InlineKeyboardButton("Vote", callback_data=f"vote_{menu_id}")
+    ])
     
     return keyboard
 
@@ -189,17 +192,25 @@ def update_user_quantity(menu_id: str, user_id: int, item_index: int, quantity: 
         # Don't update global orders here - only after vote
         logger.info(f"User {user_name} selected quantity {quantity} for {item_name} (pending vote)")
 
-def process_user_vote(menu_id: str, user_id: int) -> None:
+def process_user_vote(menu_id: str, user_id: int) -> bool:
     """
     Process user vote - move pending selections to actual quantities and update global orders.
     
     Args:
         menu_id: ID of the menu
         user_id: ID of the user
+        
+    Returns:
+        True if vote was processed successfully, False if user already voted or no pending selections
     """
+    # Check if user already voted
+    if menu_id in user_quantities and user_id in user_quantities[menu_id]:
+        logger.info(f"User {user_id} already voted for menu {menu_id}")
+        return False
+    
     if menu_id not in pending_selections or user_id not in pending_selections[menu_id]:
         logger.info(f"No pending selections for user {user_id} in menu {menu_id}")
-        return
+        return False
     
     # Move pending selections to actual quantities
     if menu_id not in user_quantities:
@@ -214,6 +225,7 @@ def process_user_vote(menu_id: str, user_id: int) -> None:
     del pending_selections[menu_id][user_id]
     
     logger.info(f"User {user_id} vote processed for menu {menu_id}")
+    return True
 
 def update_global_orders_from_user_quantities(menu_id: str) -> None:
     """Update global order counts based on all user quantities."""
@@ -310,8 +322,9 @@ async def update_menu_display(context: ContextTypes.DEFAULT_TYPE, menu_id: str) 
         return
     
     try:
-        # Create updated menu text with quantities
-        updated_menu_text = format_visual_menu(original_text, options, global_orders.get(menu_id, {}))
+        # Create updated menu text with combined quantities (including pending selections)
+        combined_quantities = get_combined_orders(menu_id)
+        updated_menu_text = format_visual_menu(original_text, options, combined_quantities)
         
         # Create updated keyboard
         keyboard = create_quantity_keyboard(menu_id, options)
@@ -331,3 +344,144 @@ async def update_menu_display(context: ContextTypes.DEFAULT_TYPE, menu_id: str) 
         
     except Exception as e:
         logger.error(f"Error updating menu display for {menu_id}: {e}")
+
+def get_combined_orders(menu_id: str) -> Dict[str, int]:
+    """
+    Get combined order counts including both voted and pending selections.
+    
+    Args:
+        menu_id: ID of the menu
+        
+    Returns:
+        Dictionary mapping item names to total quantities
+    """
+    combined_orders = {}
+    
+    # Get menu options
+    menu_info = menu_data.get(menu_id, {})
+    options = menu_info.get("options", [])
+    
+    # Initialize with zeros
+    for option in options:
+        combined_orders[option] = 0
+    
+    # Add quantities from voted users
+    user_quants = user_quantities.get(menu_id, {})
+    for user_id, user_items in user_quants.items():
+        for item_name, quantity in user_items.items():
+            if item_name in combined_orders:
+                combined_orders[item_name] += quantity
+    
+    # Add quantities from pending selections (only for users who haven't voted yet)
+    pending = pending_selections.get(menu_id, {})
+    for user_id, user_items in pending.items():
+        # Only add pending selections if user hasn't voted yet
+        if user_id not in user_quants:
+            for item_name, quantity in user_items.items():
+                if item_name in combined_orders:
+                    combined_orders[item_name] += quantity
+    
+    return combined_orders
+
+def get_combined_user_selections(menu_id: str) -> Dict[int, Dict[str, Any]]:
+    """
+    Get combined user selections including both voted and pending users.
+    
+    Args:
+        menu_id: ID of the menu
+        
+    Returns:
+        Dictionary mapping user_id to user data
+    """
+    combined_selections = {}
+    
+    # Add voted users first (these take priority)
+    user_quants = user_quantities.get(menu_id, {})
+    user_selections_data = user_selections.get(menu_id, {})
+    
+    for user_id, user_items in user_quants.items():
+        if user_id in user_selections_data:
+            combined_selections[user_id] = user_selections_data[user_id].copy()
+            combined_selections[user_id]['quantities'] = user_items.copy()
+            combined_selections[user_id]['voted'] = True
+    
+    # Add pending users (only if they haven't voted yet)
+    pending = pending_selections.get(menu_id, {})
+    for user_id, user_items in pending.items():
+        # Only add if user hasn't already voted
+        if user_id not in combined_selections and user_id in user_selections_data:
+            combined_selections[user_id] = user_selections_data[user_id].copy()
+            combined_selections[user_id]['quantities'] = user_items.copy()
+            combined_selections[user_id]['voted'] = False
+    
+    return combined_selections
+
+def validate_user_selections(menu_id: str, user_id: int) -> bool:
+    """
+    Validate if user has made any selections.
+    
+    Args:
+        menu_id: ID of the menu
+        user_id: ID of the user
+        
+    Returns:
+        True if user has selections, False otherwise
+    """
+    # Check pending selections
+    pending = pending_selections.get(menu_id, {}).get(user_id, {})
+    if any(qty > 0 for qty in pending.values()):
+        return True
+    
+    # Check voted selections
+    user_quants = user_quantities.get(menu_id, {}).get(user_id, {})
+    if any(qty > 0 for qty in user_quants.values()):
+        return True
+    
+    return False
+
+def get_user_total_selections(menu_id: str, user_id: int) -> int:
+    """
+    Get total number of items selected by user.
+    
+    Args:
+        menu_id: ID of the menu
+        user_id: ID of the user
+        
+    Returns:
+        Total number of items selected
+    """
+    total = 0
+    
+    # Count pending selections
+    pending = pending_selections.get(menu_id, {}).get(user_id, {})
+    total += sum(pending.values())
+    
+    # Count voted selections
+    user_quants = user_quantities.get(menu_id, {}).get(user_id, {})
+    total += sum(user_quants.values())
+    
+    return total
+
+def reset_user_selections(menu_id: str, user_id: int) -> None:
+    """
+    Reset user's pending selections.
+    
+    Args:
+        menu_id: ID of the menu
+        user_id: ID of the user
+    """
+    # Clear pending selections
+    if menu_id in pending_selections and user_id in pending_selections[menu_id]:
+        del pending_selections[menu_id][user_id]
+    
+    # Clear user selections
+    if menu_id in user_selections and user_id in user_selections[menu_id]:
+        del user_selections[menu_id][user_id]
+    
+    # Clear user quantities (if they haven't voted yet)
+    if menu_id in user_quantities and user_id in user_quantities[menu_id]:
+        del user_quantities[menu_id][user_id]
+        # Update global orders after removing user
+        update_global_orders_from_user_quantities(menu_id)
+    
+    logger.info(f"User {user_id} selections reset for menu {menu_id}")

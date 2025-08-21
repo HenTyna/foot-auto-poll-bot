@@ -43,7 +43,6 @@ ERROR_POLL_CREATION = "មានបញ្ហាក្នុងការបង្
 ERROR_POLL_NOT_FOUND = "ខ្ញុំមិនអាចរកឃើញ menu នេះទេ។"
 ERROR_NO_ORDERS = "មិនមានការបញ្ជាទិញណាមួយឡើយ។"
 ERROR_NO_SELECTION = "❗ You haven't selected any food yet!"
-ORDER_CLOSED_MESSAGE = "✅ Order has been closed."
 
 def setup_logging() -> None:
     """Setup logging configuration."""
@@ -51,7 +50,7 @@ def setup_logging() -> None:
         level=getattr(logging, LOG_LEVEL),
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.FileHandler(LOG_FILE),
+            logging.FileHandler(LOG_FILE, encoding='utf-8'),
             logging.StreamHandler()
         ]
     )

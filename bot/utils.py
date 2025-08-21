@@ -80,11 +80,19 @@ def format_visual_menu(original_text: str, options: List[str], quantities: Dict[
         else:
             menu_lines.append(f"{i}. {option}")
     
+    # Count total selections
+    total_selections = sum(quantities.values())
+    
     menu_lines.extend([
         "",
         "━━━━━━━━━━━━━━━━━━",
+        f"📊 Total : {total_selections}",
         "📝 Select quantities and click Vote to confirm",
+        "💡 Only voted selections will be included in the order",
+        "👤 If you want to change your order, click reset and select the item again",
+        "🔄 If you want to remove an item, click reset and select the item again"
         ""
+
     ])
     
     return "\n".join(menu_lines)
@@ -161,7 +169,10 @@ def format_order_summary(order_items: Dict[str, int], order_name: str = "Seyha",
                 if item in order_items and qty > 0:  # Only include items that are actually ordered
                     if item not in item_voters:
                         item_voters[item] = []
-                    item_voters[item].append(f"{user_name} (x{qty})" if qty > 1 else user_name)
+                    
+                    # Add voter info without status indicator
+                    voter_info = f"{user_name} (x{qty})" if qty > 1 else user_name
+                    item_voters[item].append(voter_info)
         
         # Add voter details for each item
         for item, qty in order_items.items():
